@@ -1249,6 +1249,7 @@ proc getEnumIdent(n: PNode): PNode =
   assert result.kind == nkIdent
 
 proc buildStmtList(a: PNode): PNode
+proc skipToSemicolon(p: var Parser; err: string; exitForCurlyRi=true): PNode
 
 include preprocessor
 
@@ -1767,18 +1768,45 @@ proc declarationWithoutSemicolon(p: var Parser; genericParams: PNode = emptyNode
   parseCallConv(p, pragmas)
   skipDeclarationSpecifiers(p, varKind)
   expectIdent(p)
+
+  # ignore cpp functions not in a class
+  if pfCpp in p.options.flags:
+    saveContext(p)
+    getTok(p) # skip identifier to look ahead
+
+    if p.scopeCounter == 0 and p.tok.xkind == pxScope:
+      closeContext(p)
+      raise newException(ERetryParsing, "Ignoring c++ function definitions")
+
+    backtrackContext(p)
+
   var baseTyp = typeAtom(p)
   var rettyp = pointer(p, baseTyp)
   skipDeclarationSpecifiers(p, varKind)
   parseCallConv(p, pragmas)
   skipDeclarationSpecifiers(p, varKind)
+  #if baseTyp.kind == nkIdent and p.tok.xkind == pxParLe:
+  #  backtrackContextB(p)
+  #else:
+  #  closeContextB(p)
 
   if p.tok.xkind == pxParLe:
     # Function pointer declaration: This is of course only a heuristic, but the
-    # best we can do here.
+    # best we can do here. # function pointer: typedef typ (*name)();
     return parseFunctionPointerDecl(p, rettyp)
 
   expectIdent(p)
+  # ignore cpp functions not in a class
+  if pfCpp in p.options.flags:
+    saveContext(p)
+    getTok(p) # skip identifier to look ahead
+
+    if p.scopeCounter == 0 and p.tok.xkind == pxScope:
+      closeContext(p)
+      raise newException(ERetryParsing, "Ignoring c++ function definitions")
+
+    backtrackContext(p)
+
   var origName = p.tok.s
   if pfCpp in p.options.flags and p.tok.s == "operator":
     origName = ""
@@ -2778,6 +2806,9 @@ proc skipToSemicolon(p: var Parser; err: string; exitForCurlyRi=true): PNode =
       if inCurly == 0 and exitForCurlyRi:
         break
       dec inCurly
+      if inCurly == 0:
+        getTok(p)
+        break
     of pxSemicolon:
       if inCurly == 0:
         getTok(p)
@@ -2802,7 +2833,7 @@ proc compoundStatement(p: var Parser; newScope=true): PNode =
       try:
         var a = statement(p)
         closeContextB(p)
-        if a.kind == nkEmpty: break
+        if a.kind == nkEmpty: continue
         embedStmts(result, a)
       except ERetryParsing:
         let m = getCurrentExceptionMsg()

@@ -215,7 +215,15 @@ proc parseStmtList(p: var Parser; sectionParser: SectionParser): PNode =
       of "else", "endif", "elif": break
       else: discard
     else: discard
-    addSon(result, sectionParser(p))
+    saveContextB(p, true)
+    try:
+      addSon(result, sectionParser(p))
+      closeContextB(p)
+    except ERetryParsing:
+      let err = getCurrentExceptionMsg()
+      backtrackContextB(p)
+      result.add skipToSemicolon(p, err, false)
+    
 
 proc eatEndif(p: var Parser) =
   if isDir(p, "endif"):
